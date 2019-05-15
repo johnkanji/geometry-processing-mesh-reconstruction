@@ -1,6 +1,11 @@
 #include "poisson_surface_reconstruction.h"
+#include "fd_interpolate.h"
+#include "fd_grad.h"
 #include <igl/copyleft/marching_cubes.h>
+#include <iostream>
 #include <algorithm>
+
+#define print_size(s, M) std::cout << s << ": " << M.rows() << "x" << M.cols() << std::endl;
 
 void poisson_surface_reconstruction(
     const Eigen::MatrixXd & P,
@@ -47,6 +52,34 @@ void poisson_surface_reconstruction(
   ////////////////////////////////////////////////////////////////////////////
   // Add your code here
   ////////////////////////////////////////////////////////////////////////////
+  Eigen::SparseMatrix<double> W, Wx, Wy, Wz, G;
+  Eigen::VectorXd v, vx, vy, vz;
+  Eigen::RowVector3d dx(h/2., 0., 0.);
+  Eigen::RowVector3d dy(0., h/2., 0.);
+  Eigen::RowVector3d dz(0., 0., h/2.);
+  fd_interpolate(nx - 1, ny, nz, h, corner + dx, P.rowwise() + dx, Wx);
+  fd_interpolate(nx, ny - 1, nz, h, corner + dy, P.rowwise() + dy, Wy);
+  fd_interpolate(nx, ny, nz - 1, h, corner + dz, P.rowwise() + dz, Wz);
+  fd_interpolate(nx, ny, nz, h, corner, P, W);
+  vx = Wx.transpose() * N.col(0);
+  vy = Wy.transpose() * N.col(1);
+  vz = Wz.transpose() * N.col(2);
+  v.resize(vx.size() + vy.size() + vz.size());
+  v << vx, vy, vz;
+
+  fd_grad(nx, ny, nz, h, G);
+  auto A = G.transpose() * G;
+  auto b = G.transpose() * v;
+
+  Eigen::ConjugateGradient<Eigen::SparseMatrix<double>> solver;
+  solver.compute(A);
+  g = solver.solve(b);
+  std::cout << "#iterations:     " << solver.iterations() << std::endl;
+  std::cout << "estimated error: " << solver.error()      << std::endl;
+
+  double sigma = 1./W.rows() * Eigen::RowVectorXd::Ones(g.rows()) * W * g;
+  g = g - Eigen::VectorXd::Ones(g.size()) * sigma;
+
 
   ////////////////////////////////////////////////////////////////////////////
   // Run black box algorithm to compute mesh from implicit function: this
